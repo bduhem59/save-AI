@@ -6,6 +6,7 @@ Endpoints : POST /save | GET /list | GET /search | GET /stats
 import os
 import sys
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -32,13 +33,23 @@ logger = logging.getLogger(__name__)
 
 # --- Application FastAPI ---
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    storage.init_db()
+    mode = "MOCK (pas d'appel Claude)" if claude_client.MOCK_MODE else "CLAUDE API (appels réels)"
+    logger.info(f"Save & Resurface démarré — mode {mode}")
+    logger.info(f"Base de données : {storage.DB_PATH}")
+    yield
+
+
 app = FastAPI(
     title="Save & Resurface API",
-    version="0.1.0",
+    version="0.2.0",
     description="Backend local pour sauvegarder et synthétiser du contenu web avec Claude.",
+    lifespan=lifespan,
 )
 
-# CORS ouvert : accepte les requêtes de l'extension Chrome et de Streamlit en local
+# CORS ouvert : accepte les requêtes de l'extension Chrome et du frontend Next.js en local
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,13 +59,10 @@ app.add_middleware(
 
 SOURCES_VALIDES = {"article", "reddit", "youtube"}
 
-
-@app.on_event("startup")
-def startup() -> None:
-    storage.init_db()
-    mode = "MOCK (pas d'appel Claude)" if claude_client.MOCK_MODE else "CLAUDE API (appels réels)"
-    logger.info(f"Save & Resurface démarré — mode {mode}")
-    logger.info(f"Base de données : {storage.DB_PATH}")
+CATEGORIES_VALIDES = {
+    "IA", "Tech & Dev", "Business", "Productivité",
+    "Sport", "Société", "Culture", "Autre",
+}
 
 
 # --- Modèles Pydantic ---
@@ -104,6 +112,7 @@ def save_content(req: SaveRequest) -> dict:
             "tags": save["tags"],
             "summary": save["summary"],
             "relevance_score": save.get("relevance_score", 3),
+            "category": save.get("category"),
             "cost_eur": 0.0,
             "duplicate": True,
         }
@@ -119,6 +128,10 @@ def save_content(req: SaveRequest) -> dict:
 
     sd = result["summary_data"]
 
+    # Catégorie détectée par Claude (valeur normalisée ou fallback)
+    raw_category = sd.get("category", "Autre")
+    category = raw_category if raw_category in CATEGORIES_VALIDES else "Autre"
+
     # Conversion du JSON structuré en texte markdown pour stockage
     summary_text = _format_summary_as_markdown(sd)
 
@@ -131,17 +144,17 @@ def save_content(req: SaveRequest) -> dict:
         summary=summary_text,
         tags=sd.get("tags", []),
         relevance_score=sd.get("relevance_score", 3),
-        # On stocke aussi le JSON structuré dans metadata pour les futures fonctionnalités
         metadata={**req.metadata, "summary_structured": sd},
         tokens_input=result["tokens_input"],
         tokens_output=result["tokens_output"],
         cost_eur=result["cost_eur"],
         model_used=result["model_used"],
+        category=category,
     )
 
     logger.info(
         f"[SAVE #{save_id}] {req.source} | {req.title[:60]!r} | "
-        f"coût: {result['cost_eur']:.4f}€ | modèle: {result['model_used']}"
+        f"catégorie: {category} | coût: {result['cost_eur']:.4f}€ | modèle: {result['model_used']}"
     )
 
     return {
@@ -149,6 +162,7 @@ def save_content(req: SaveRequest) -> dict:
         "tags": sd.get("tags", []),
         "summary": summary_text,
         "relevance_score": sd.get("relevance_score", 3),
+        "category": category,
         "cost_eur": result["cost_eur"],
         "duplicate": False,
     }
@@ -158,11 +172,11 @@ def save_content(req: SaveRequest) -> dict:
 def list_saves(
     source: Optional[str] = Query(None, description="Filtrer par source : article | reddit | youtube"),
     tag: Optional[str] = Query(None, description="Filtrer par tag exact"),
+    category: Optional[str] = Query(None, description="Filtrer par catégorie"),
     limit: int = Query(50, ge=1, le=200, description="Nombre max de résultats"),
 ) -> dict:
     """Liste les saves triés par date décroissante, sans le contenu brut."""
-    saves = storage.list_saves(source=source, tag=tag, limit=limit)
-    # content_raw exclu des listes (trop volumineux)
+    saves = storage.list_saves(source=source, tag=tag, category=category, limit=limit)
     for s in saves:
         s.pop("content_raw", None)
     return {"saves": saves, "count": len(saves)}
@@ -181,7 +195,7 @@ def search_saves(
 
 @app.get("/stats")
 def get_stats() -> dict:
-    """Statistiques globales : total saves, répartition sources, coûts Claude, top tags."""
+    """Statistiques globales : total saves, répartition sources/catégories, coûts Claude, top tags."""
     return storage.get_stats()
 
 
@@ -207,6 +221,9 @@ def record_consultation(save_id: int, req: ConsultationRequest) -> dict:
 
 def _format_summary_as_markdown(sd: dict) -> str:
     """Convertit le JSON structuré Claude en texte markdown pour stockage et affichage."""
+    if sd.get("mode_used") == "chapters":
+        return _format_chapters_markdown(sd)
+
     parts = []
 
     if sd.get("tldr"):
@@ -216,17 +233,84 @@ def _format_summary_as_markdown(sd: dict) -> str:
         parts.append("\n**Points clés** :")
         parts.extend(f"- {p}" for p in sd["points_cles"])
 
+    if sd.get("donnees_chiffrees"):
+        parts.append("\n**Données chiffrées** :")
+        parts.extend(f"- {d}" for d in sd["donnees_chiffrees"])
+
+    citations = sd.get("citations")
+    if citations:
+        parts.append("\n**Citations** :")
+        for c in citations:
+            if isinstance(c, dict):
+                line = f'> "{c.get("texte", "")}"'
+                src = c.get("source") or c.get("intervenant")
+                if src:
+                    line += f" — {src}"
+                parts.append(line)
+            elif isinstance(c, str):
+                parts.append(f'> "{c}"')
+
     dc = sd.get("discussion_communautaire")
     if dc:
         parts.append("\n**Discussion communautaire** :")
         if dc.get("sujets_frequents"):
-            sujets = " · ".join(dc["sujets_frequents"])
-            parts.append(f"Sujets fréquents : {sujets}")
+            parts.append("**Sujets fréquents :**")
+            parts.extend(f"- {s}" for s in dc["sujets_frequents"])
         if dc.get("consensus"):
-            parts.append("Consensus : " + dc["consensus"][0])
+            consensus = dc["consensus"]
+            parts.append("**Consensus :** " + (consensus[0] if isinstance(consensus, list) else consensus))
+        if dc.get("debats"):
+            debats = dc["debats"] if isinstance(dc["debats"], list) else [dc["debats"]]
+            parts.append("**Débats :**")
+            parts.extend(f"- {d}" for d in debats)
+        if dc.get("contre_arguments"):
+            cas = dc["contre_arguments"] if isinstance(dc["contre_arguments"], list) else [dc["contre_arguments"]]
+            parts.append("**Contre-arguments :**")
+            parts.extend(f"- {ca}" for ca in cas)
+        if dc.get("points_minoritaires"):
+            parts.append("**Points minoritaires :**")
+            parts.extend(f"- {p}" for p in dc["points_minoritaires"])
+        if dc.get("evolution_fil"):
+            parts.append(f"**Évolution du fil :** {dc['evolution_fil']}")
         if dc.get("citations"):
-            for c in dc["citations"][:2]:
+            for c in dc["citations"][:3]:
                 parts.append(f'> "{c["texte"]}" — {c["auteur"]}')
+
+    if sd.get("conclusions"):
+        parts.append(f"\n**Conclusions** : {sd['conclusions']}")
+
+    return "\n".join(parts)
+
+
+def _format_chapters_markdown(sd: dict) -> str:
+    """Formateur spécifique pour le mode YouTube chapitres."""
+    parts = []
+
+    if sd.get("tldr"):
+        parts.append(f"**TL;DR** : {sd['tldr']}")
+
+    chapters = sd.get("chapters", [])
+    if chapters:
+        n = len(chapters)
+        parts.append(f"\n**{n} chapitre{'s' if n > 1 else ''}** :")
+        for i, ch in enumerate(chapters, 1):
+            title = ch.get("title", f"Chapitre {i}")
+            ts = ch.get("timestamp_approx")
+            header = f"\n**{i}. {title}**"
+            if ts:
+                header += f" _{ts}_"
+            parts.append(header)
+            for kp in ch.get("key_points", []):
+                parts.append(f"- {kp}")
+            for kq in ch.get("key_quotes", []):
+                parts.append(f'> "{kq}"')
+
+    if sd.get("donnees_chiffrees"):
+        parts.append("\n**Données chiffrées** :")
+        parts.extend(f"- {d}" for d in sd["donnees_chiffrees"])
+
+    if sd.get("conclusion_globale"):
+        parts.append(f"\n**Conclusion globale** : {sd['conclusion_globale']}")
 
     return "\n".join(parts)
 

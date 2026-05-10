@@ -31,6 +31,7 @@ def init_db() -> None:
                 summary              TEXT,
                 tags                 TEXT    DEFAULT '[]',
                 relevance_score      INTEGER,
+                category             TEXT,
                 metadata             TEXT    DEFAULT '{}',
                 created_at           TEXT    DEFAULT (datetime('now')),
                 last_consulted_at    TEXT,
@@ -47,9 +48,17 @@ def init_db() -> None:
                 action       TEXT
             );
 
-            CREATE INDEX IF NOT EXISTS idx_saves_source  ON saves(source);
-            CREATE INDEX IF NOT EXISTS idx_saves_created ON saves(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_saves_source   ON saves(source);
+            CREATE INDEX IF NOT EXISTS idx_saves_created  ON saves(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_saves_category ON saves(category);
         """)
+
+    # Migration idempotente : ajout de la colonne category sur les bases existantes
+    with _connect() as conn:
+        try:
+            conn.execute("ALTER TABLE saves ADD COLUMN category TEXT")
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
 
 
 def url_exists(url: str) -> Optional[int]:
@@ -72,14 +81,16 @@ def insert_save(
     tokens_output: int,
     cost_eur: float,
     model_used: str,
+    category: Optional[str] = None,
 ) -> int:
     """Insère un nouveau save et retourne son ID."""
     with _connect() as conn:
         cursor = conn.execute(
             """INSERT INTO saves
                (url, source, title, content_raw, summary, tags, relevance_score,
-                metadata, claude_tokens_input, claude_tokens_output, claude_cost_eur, model_used)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                metadata, claude_tokens_input, claude_tokens_output, claude_cost_eur,
+                model_used, category)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 url,
                 source,
@@ -93,6 +104,7 @@ def insert_save(
                 tokens_output,
                 cost_eur,
                 model_used,
+                category,
             ),
         )
         return cursor.lastrowid
@@ -108,11 +120,13 @@ def get_save_by_id(save_id: int) -> Optional[dict]:
 def list_saves(
     source: Optional[str] = None,
     tag: Optional[str] = None,
+    category: Optional[str] = None,
     limit: int = 50,
 ) -> list[dict]:
     """
     Liste les saves triés par date décroissante.
-    Filtres optionnels : source (article/reddit/youtube) et tag (nom exact).
+    Filtres optionnels : source, tag (nom exact), category.
+    Pour category="Autre", inclut aussi les saves sans catégorie (NULL).
     """
     query = "SELECT * FROM saves"
     params: list = []
@@ -122,9 +136,14 @@ def list_saves(
         conditions.append("source = ?")
         params.append(source)
     if tag:
-        # Recherche du tag exact dans le JSON array
-        conditions.append('tags LIKE ?')
+        conditions.append("tags LIKE ?")
         params.append(f'%"{tag}"%')
+    if category:
+        if category == "Autre":
+            conditions.append("(category IS NULL OR category = 'Autre')")
+        else:
+            conditions.append("category = ?")
+            params.append(category)
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -152,12 +171,16 @@ def search_saves(q: str) -> list[dict]:
 
 
 def get_stats() -> dict:
-    """Statistiques globales : total, répartition par source, coûts, top tags."""
+    """Statistiques globales : total, répartition par source/catégorie, coûts, top tags."""
     with _connect() as conn:
         total = conn.execute("SELECT COUNT(*) as n FROM saves").fetchone()["n"]
 
         by_source = conn.execute(
             "SELECT source, COUNT(*) as n FROM saves GROUP BY source"
+        ).fetchall()
+
+        by_category = conn.execute(
+            "SELECT COALESCE(category, 'Autre') as cat, COUNT(*) as n FROM saves GROUP BY cat"
         ).fetchall()
 
         cost_row = conn.execute(
@@ -167,7 +190,14 @@ def get_stats() -> dict:
                FROM saves"""
         ).fetchone()
 
-        # Comptage des tags à partir des JSON arrays stockés
+        by_week = conn.execute(
+            """SELECT strftime('%Y-W%W', created_at) as week, COUNT(*) as n
+               FROM saves
+               WHERE created_at >= date('now', '-84 days')
+               GROUP BY week
+               ORDER BY week"""
+        ).fetchall()
+
         all_tags_rows = conn.execute(
             "SELECT tags FROM saves WHERE tags != '[]'"
         ).fetchall()
@@ -180,9 +210,11 @@ def get_stats() -> dict:
         return {
             "total_saves": total,
             "by_source": {row["source"]: row["n"] for row in by_source},
+            "by_category": {row["cat"]: row["n"] for row in by_category},
             "claude_cost_eur_total": round(cost_row["total_cost"], 4),
             "claude_tokens_total": cost_row["total_tokens"],
             "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
+            "by_week": [{"week": row["week"], "count": row["n"]} for row in by_week],
         }
 
 
