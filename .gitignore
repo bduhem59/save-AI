@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Variables d'environnement (contient la clé API)
+.env
+
+# Base de données SQLite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# uv
+.python-version
+uv.lock
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

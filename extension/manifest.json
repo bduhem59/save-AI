@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Save & Resurface",
+  "version": "0.2.0",
+  "description": "Sauvegardez du contenu web en 1 clic avec synthèses Claude",
+
+  "permissions": ["activeTab", "tabs"],
+  "host_permissions": ["http://localhost:8000/*"],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Save & Resurface",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["readability.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
