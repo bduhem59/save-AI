@@ -30,3 +30,6 @@ uv.lock
 
 # Logs
 *.log
+node_modules/
+.next/
+frontend-next/.next/
