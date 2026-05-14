@@ -94,6 +94,14 @@ class ConsultationRequest(BaseModel):
     action: str  # "read" | "archived" | "dismissed"
 
 
+class FavoriteRequest(BaseModel):
+    is_favorite: bool
+
+
+class ReadRequest(BaseModel):
+    is_read: bool
+
+
 # --- Endpoints ---
 
 @app.post("/save")
@@ -201,11 +209,30 @@ def get_stats() -> dict:
 
 @app.get("/saves/{save_id}")
 def get_save(save_id: int) -> dict:
-    """Retourne un save complet (avec contenu brut) par son ID."""
+    """Retourne un save complet (avec contenu brut) par son ID. Met à jour last_consulted_at."""
     save = storage.get_save_by_id(save_id)
     if not save:
         raise HTTPException(status_code=404, detail=f"Save #{save_id} introuvable")
+    storage.touch_consulted(save_id)
     return save
+
+
+@app.patch("/saves/{save_id}/favorite")
+def toggle_favorite(save_id: int, req: FavoriteRequest) -> dict:
+    """Bascule l'état favori d'un save."""
+    if not storage.get_save_by_id(save_id):
+        raise HTTPException(status_code=404, detail=f"Save #{save_id} introuvable")
+    storage.set_favorite(save_id, req.is_favorite)
+    return {"ok": True, "is_favorite": req.is_favorite}
+
+
+@app.patch("/saves/{save_id}/read")
+def mark_read(save_id: int, req: ReadRequest) -> dict:
+    """Marque un save comme lu ou non lu (action explicite utilisateur)."""
+    if not storage.get_save_by_id(save_id):
+        raise HTTPException(status_code=404, detail=f"Save #{save_id} introuvable")
+    storage.set_read(save_id, req.is_read)
+    return {"ok": True, "is_read": req.is_read}
 
 
 @app.post("/saves/{save_id}/consult")

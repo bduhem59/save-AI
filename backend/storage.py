@@ -38,7 +38,9 @@ def init_db() -> None:
                 claude_tokens_input  INTEGER DEFAULT 0,
                 claude_tokens_output INTEGER DEFAULT 0,
                 claude_cost_eur      REAL    DEFAULT 0.0,
-                model_used           TEXT
+                model_used           TEXT,
+                is_favorite          INTEGER NOT NULL DEFAULT 0,
+                is_read              INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS consultations (
@@ -53,12 +55,19 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_saves_category ON saves(category);
         """)
 
-    # Migration idempotente : ajout de la colonne category sur les bases existantes
+    # Migrations idempotentes — ajout des colonnes sur les bases existantes
+    _migrate_add_column("category",    "TEXT")
+    _migrate_add_column("is_favorite", "INTEGER NOT NULL DEFAULT 0")
+    _migrate_add_column("is_read",     "INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_add_column(column: str, definition: str) -> None:
+    """Ajoute une colonne si elle n'existe pas — idempotent."""
     with _connect() as conn:
         try:
-            conn.execute("ALTER TABLE saves ADD COLUMN category TEXT")
+            conn.execute(f"ALTER TABLE saves ADD COLUMN {column} {definition}")
         except sqlite3.OperationalError:
-            pass  # colonne déjà présente
+            pass
 
 
 def url_exists(url: str) -> Optional[int]:
@@ -207,8 +216,21 @@ def get_stats() -> dict:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
         top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
+        unread_count = conn.execute(
+            "SELECT COUNT(*) as n FROM saves WHERE is_read = 0"
+        ).fetchone()["n"]
+        favorites_count = conn.execute(
+            "SELECT COUNT(*) as n FROM saves WHERE is_favorite = 1"
+        ).fetchone()["n"]
+        this_week_count = conn.execute(
+            "SELECT COUNT(*) as n FROM saves WHERE created_at >= date('now', '-7 days')"
+        ).fetchone()["n"]
+
         return {
             "total_saves": total,
+            "unread_count": unread_count,
+            "favorites_count": favorites_count,
+            "this_week_count": this_week_count,
             "by_source": {row["source"]: row["n"] for row in by_source},
             "by_category": {row["cat"]: row["n"] for row in by_category},
             "claude_cost_eur_total": round(cost_row["total_cost"], 4),
@@ -216,6 +238,33 @@ def get_stats() -> dict:
             "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
             "by_week": [{"week": row["week"], "count": row["n"]} for row in by_week],
         }
+
+
+def touch_consulted(save_id: int) -> None:
+    """Met à jour last_consulted_at sans log — appelé à chaque ouverture de save."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE saves SET last_consulted_at = datetime('now') WHERE id = ?",
+            (save_id,),
+        )
+
+
+def set_favorite(save_id: int, value: bool) -> None:
+    """Bascule l'état favori d'un save."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE saves SET is_favorite = ? WHERE id = ?",
+            (int(value), save_id),
+        )
+
+
+def set_read(save_id: int, value: bool) -> None:
+    """Marque un save comme lu ou non lu."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE saves SET is_read = ? WHERE id = ?",
+            (int(value), save_id),
+        )
 
 
 def record_consultation(save_id: int, action: str) -> None:
@@ -238,4 +287,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         d["tags"] = json.loads(d["tags"])
     if d.get("metadata"):
         d["metadata"] = json.loads(d["metadata"])
+    # Entiers SQLite → booléens Python (sérialisés en true/false dans JSON)
+    d["is_favorite"] = bool(d.get("is_favorite", 0))
+    d["is_read"]     = bool(d.get("is_read", 0))
     return d
