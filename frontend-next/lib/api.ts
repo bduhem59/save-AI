@@ -43,3 +43,19 @@ export async function markConsulted(id: number, action = "read"): Promise<void> 
     body: JSON.stringify({ action }),
   });
 }
+
+export async function setFavorite(id: number, value: boolean): Promise<void> {
+  await fetch(`${API_BASE}/saves/${id}/favorite`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_favorite: value }),
+  });
+}
+
+export async function setRead(id: number, value: boolean): Promise<void> {
+  await fetch(`${API_BASE}/saves/${id}/read`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_read: value }),
+  });
+}

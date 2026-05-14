@@ -1,81 +1,127 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Header } from "@/components/Header";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Sidebar } from "@/components/Sidebar";
 import { SavesList } from "@/components/SavesList";
 import { Categories } from "@/components/Categories";
 import { Stats } from "@/components/Stats";
-
-type Tab = "saves" | "categories" | "stats";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "saves",      label: "Saves" },
-  { id: "categories", label: "Catégories" },
-  { id: "stats",      label: "Statistiques" },
-];
+import { ReadingModal } from "@/components/ReadingModal";
+import { CommandPalette } from "@/components/CommandPalette";
+import { getStats, listSaves } from "@/lib/api";
+import type { Stats as StatsData, Save, View } from "@/types";
+import type { Density } from "@/components/ui/density-toggle";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<Tab>("saves");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterSource, setFilterSource] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
+  const [view, setView] = useState<View>("inbox");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [density, setDensity] = useState<Density>("list");
+  const [selectedSaveId, setSelectedSaveId] = useState<number | null>(null);
 
-  const handleSearch = useCallback((q: string) => {
-    setSearchQuery(q);
-    if (q) setActiveTab("saves");
+  // Sidebar counts
+  const [stats, setStats] = useState<StatsData | null>(null);
+
+  // Master save list — seul détenteur de la vérité
+  const [allSaves, setAllSaves] = useState<Save[]>([]);
+  const [savesLoading, setSavesLoading] = useState(true);
+  const [savesError, setSavesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getStats().then(setStats).catch(() => {});
   }, []);
 
-  const handleCategoryClick = useCallback((category: string) => {
-    setFilterCategory(category);
-    setFilterSource("");
-    setActiveTab("saves");
+  useEffect(() => {
+    setSavesLoading(true);
+    setSavesError(null);
+    listSaves({ limit: 200 })
+      .then((d) => setAllSaves(d.saves))
+      .catch(() => {
+        setSavesError("Backend non joignable — lance : uv run uvicorn backend.app:app --reload --port 8000");
+        setAllSaves([]);
+      })
+      .finally(() => setSavesLoading(false));
   }, []);
 
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    if (tab !== "saves") {
-      setSearchQuery("");
-      setFilterCategory("");
-      setFilterSource("");
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const typing = tag === "input" || tag === "textarea";
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault(); setCmdOpen(true); return;
+      }
+      if (!typing && e.key === "/") { e.preventDefault(); setCmdOpen(true); }
     }
-  };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const counts = useMemo(() => ({
+    total:     stats?.total_saves     ?? 0,
+    unread:    stats?.unread_count    ?? 0,
+    favorites: stats?.favorites_count ?? 0,
+    thisWeek:  stats?.this_week_count ?? 0,
+    byCat:     stats?.by_category    ?? {},
+  }), [stats]);
+
+  const handleCategoryClick = useCallback((cat: string) => {
+    setActiveCategory(cat);
+    setView("inbox");
+  }, []);
+
+  const handleSaveUpdated = useCallback(
+    (id: number, changes: { is_favorite: boolean; is_read: boolean }) => {
+      setAllSaves((prev) => prev.map((s) => (s.id === id ? { ...s, ...changes } : s)));
+    },
+    []
+  );
+
+  const handleNavigate = useCallback((v: View, category?: string) => {
+    setView(v);
+    setActiveCategory(category ?? null);
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header onSearch={handleSearch} />
+    <div className="min-h-screen flex bg-ink-50/50">
+      <Sidebar
+        view={view}
+        setView={setView}
+        activeCategory={activeCategory}
+        setActiveCategory={setActiveCategory}
+        counts={counts}
+        onOpenCmd={() => setCmdOpen(true)}
+      />
 
-      <main className="max-w-5xl mx-auto px-4 py-6">
-        {/* Tab bar */}
-        <div className="flex gap-0 mb-6 border-b border-gray-200">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              className={[
-                "px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
-                activeTab === tab.id
-                  ? "border-indigo-600 text-indigo-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300",
-              ].join(" ")}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        {activeTab === "saves" && (
+      <main className="flex-1 min-w-0">
+        {view === "categories" ? (
+          <Categories onCategoryClick={handleCategoryClick} />
+        ) : view === "stats" ? (
+          <Stats />
+        ) : (
           <SavesList
-            searchQuery={searchQuery}
-            filterSource={filterSource}
-            filterCategory={filterCategory}
+            allSaves={allSaves}
+            loading={savesLoading}
+            error={savesError}
+            view={view}
+            filterCategory={activeCategory ?? ""}
+            density={density}
+            onDensityChange={setDensity}
+            onSelectSave={setSelectedSaveId}
           />
         )}
-        {activeTab === "categories" && (
-          <Categories onCategoryClick={handleCategoryClick} />
-        )}
-        {activeTab === "stats" && <Stats />}
       </main>
+
+      <ReadingModal
+        saveId={selectedSaveId}
+        onClose={() => setSelectedSaveId(null)}
+        onSaveUpdated={handleSaveUpdated}
+      />
+
+      <CommandPalette
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        onSelectSave={setSelectedSaveId}
+        onNavigate={handleNavigate}
+      />
     </div>
   );
 }
