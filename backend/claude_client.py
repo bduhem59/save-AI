@@ -163,239 +163,72 @@ def _real_summary(
     }
 
 
-def _mock_summary(source: str, title: str, content: str, metadata: dict, nb_comments: int) -> dict:
-    """Synthèses fictives réalistes — aucun appel Claude."""
+def _mock_summary(source: str, title: str, _content: str, _metadata: dict, _nb_comments: int) -> dict:
+    """Synthèses fictives au nouveau format — aucun appel Claude."""
 
-    # YouTube : mode déterminé par la longueur réelle du transcript
-    if source == "youtube":
-        word_count = len(content.split()) if content else 0
-        if word_count < 5_000:
-            summary_data = _mock_youtube_standard(title, metadata)
-        elif word_count <= 15_000:
-            summary_data = _mock_youtube_enriched(title, metadata)
-        else:
-            summary_data = _mock_youtube_chapters(title, metadata)
-        return {
-            "summary_data": summary_data,
-            "tokens_input": 0,
-            "tokens_output": 0,
-            "cost_eur": 0.0,
-            "model_used": "mock",
-        }
-
-    base = {
+    mocks = {
         "article": {
-            "tldr": f"[MOCK] Article analysant : {title}. Synthèse factuelle générée sans appel Claude (MOCK_MODE=true).",
-            "points_cles": [
-                "Point factuel 1 extrait du texte de l'article",
-                "Donnée chiffrée précise mentionnée dans le texte",
-                "Argument principal exposé par l'auteur",
-                "Conclusion ou prise de position présentée",
-                "Référence ou source citée dans l'article",
-            ],
-            "citations": [
-                {"texte": "Citation exemple extraite de l'article.", "source": "Auteur mock"},
-            ],
-            "donnees": {
-                "source_type": "article",
-                "auteur": metadata.get("author", "Auteur non renseigné"),
-                "date": metadata.get("published_date"),
-                "type_contenu": "analyse",
-            },
-            "conclusions": "[MOCK] Conclusion factuelle synthétisant la position de l'article.",
+            "title": title,
+            "synthesis": (
+                f"L'article porte sur : **{title}**.\n\n"
+                "L'argument central est présenté dès l'introduction et développé en plusieurs temps. "
+                "L'auteur s'appuie sur des données empiriques pour étayer sa thèse principale, "
+                "tout en reconnaissant les limites de son analyse.\n\n"
+                "## Point de tension\n\n"
+                "Une position minoritaire mais documentée contredit le consensus dominant. "
+                "Elle mérite attention car elle repose sur un corpus différent de celui cité par l'auteur.\n\n"
+                "*— Synthèse générée en MOCK_MODE, aucun appel Claude réel.*"
+            ),
             "category": "IA",
             "tags": ["mock-data", "article", "test"],
             "relevance_score": 3,
         },
         "reddit": {
-            "tldr": f"[MOCK] Discussion Reddit sur : {title}. {nb_comments} commentaires analysés (MOCK_MODE=true).",
-            "points_cles": [
-                "Point principal du post présenté par l'OP",
-                "Argument factuel central de la discussion",
-                "Élément de contexte mentionné dans le fil",
-            ],
-            "donnees": {
-                "source_type": "reddit",
-                "subreddit": metadata.get("subreddit", "r/unknown"),
-                "commentaires_analyses": nb_comments or metadata.get("comments_filtered", 0),
-                "type_contenu": "discussion",
-            },
-            "discussion_communautaire": {
-                "sujets_frequents": [
-                    "Sujet A qui revient le plus souvent dans les commentaires",
-                    "Sujet B récurrent dans les échanges",
-                ],
-                "consensus": ["Point d'accord général observé dans la communauté"],
-                "debats": ["Point activement contesté dans les commentaires"],
-                "contre_arguments": ["Contre-argument notable face à la position majoritaire"],
-                "points_minoritaires": ["Point de vue minoritaire mais notable"],
-                "evolution_fil": "Discussion restée polarisée sans consensus clair.",
-                "citations": [
-                    {"auteur": "u/mock_user_1", "texte": "Citation exemple d'un commentaire représentatif."},
-                    {"auteur": "u/mock_user_2", "texte": "Deuxième citation illustrant un autre angle."},
-                ],
-            },
-            "conclusions": "[MOCK] Conclusion sur la dynamique de la discussion Reddit.",
+            "title": title,
+            "synthesis": (
+                f"Thread Reddit : **{title}**.\n\n"
+                "Il s'agit d'un thread de type « ask », avec une majorité de réponses convergentes "
+                "autour de deux ou trois approches pratiques. Les désaccords portent sur les détails "
+                "d'implémentation plutôt que sur le principe.\n\n"
+                "## Ce qui fait consensus\n\n"
+                "La recommandation la plus fréquemment citée est soutenue par des retours d'expérience "
+                "concrets. Elle est rarement contestée dans son principe.\n\n"
+                "## Points de friction\n\n"
+                "Quelques réponses avancent une approche alternative, jugée plus robuste à long terme "
+                "mais plus coûteuse à mettre en place initialement.\n\n"
+                "*— Synthèse générée en MOCK_MODE, aucun appel Claude réel.*"
+            ),
             "category": "Société",
             "tags": ["mock-data", "reddit", "test"],
+            "relevance_score": 3,
+        },
+        "youtube": {
+            "title": title,
+            "synthesis": (
+                f"Vidéo : **{title}**.\n\n"
+                "Format identifié : masterclass. Le contenu est dense et structuré autour d'un argument "
+                "central développé en plusieurs étapes. Chaque section s'appuie sur des exemples concrets.\n\n"
+                "## Première partie\n\n"
+                "Le présentateur pose le cadre conceptuel et introduit les données clés. "
+                "Plusieurs chiffres sont avancés pour justifier la pertinence du sujet.\n\n"
+                "## Développement\n\n"
+                "L'argumentation progresse logiquement. Une tension apparaît entre deux approches "
+                "présentées comme complémentaires, mais dont les implications pratiques divergent.\n\n"
+                "## Conclusion\n\n"
+                "Le message final est clair et actionnable. Une mise en garde est formulée sur les "
+                "cas où l'approche recommandée ne s'applique pas.\n\n"
+                "*— Synthèse générée en MOCK_MODE, aucun appel Claude réel.*"
+            ),
+            "category": "Tech & Dev",
+            "tags": ["mock-data", "youtube", "test"],
             "relevance_score": 3,
         },
     }
 
     return {
-        "summary_data": base.get(source, base["article"]),
+        "summary_data": mocks.get(source, mocks["article"]),
         "tokens_input": 0,
         "tokens_output": 0,
         "cost_eur": 0.0,
         "model_used": "mock",
-    }
-
-
-# ── Mocks YouTube par mode ────────────────────────────────────────────────────
-
-def _mock_youtube_standard(title: str, metadata: dict) -> dict:
-    return {
-        "tldr": f"[MOCK • standard] Vidéo YouTube : {title}. Synthèse courte générée sans appel Claude (MOCK_MODE=true).",
-        "points_cles": [
-            "Point clé 1 présenté dans la vidéo",
-            "Information technique ou factuelle exposée",
-            "Troisième point factuel extrait du contenu",
-            "Quatrième enseignement ou démonstration",
-            "Conclusion ou takeaway principal",
-        ],
-        "citations": [
-            {"texte": "Citation exemple prononcée dans la vidéo.", "intervenant": "présentateur"},
-        ],
-        "donnees": {
-            "source_type": "youtube",
-            "chaine": metadata.get("channel", "Chaîne inconnue"),
-            "duree": metadata.get("duration", "??:??"),
-            "type_contenu": "tuto",
-        },
-        "conclusions": "[MOCK] Message principal de la vidéo résumé en une phrase.",
-        "category": "Tech & Dev",
-        "tags": ["mock-data", "youtube", "standard"],
-        "relevance_score": 3,
-        "mode_used": "standard",
-    }
-
-
-def _mock_youtube_enriched(title: str, metadata: dict) -> dict:
-    return {
-        "tldr": (
-            f"[MOCK • enriched] Vidéo YouTube enrichie : {title}. "
-            "Synthèse détaillée sans appel Claude (MOCK_MODE=true). "
-            "La vidéo couvre plusieurs angles avec données chiffrées et interviews."
-        ),
-        "points_cles": [
-            "Point clé 1 avec données précises mentionnées dans la vidéo",
-            "Argument 2 appuyé par des exemples concrets",
-            "Fait 3 extrait du transcript avec contexte",
-            "Point 4 : contradiction ou nuance apportée",
-            "Insight 5 sur les implications pratiques",
-            "Donnée 6 : chiffre précis cité",
-            "Point 7 : perspective d'un intervenant",
-            "Conclusion partielle 8 sur la première partie",
-        ],
-        "citations": [
-            {"texte": "Première citation marquante du présentateur.", "intervenant": "présentateur"},
-            {"texte": "Citation d'un invité sur le sujet principal.", "intervenant": "invité"},
-            {"texte": "Troisième citation illustrant un point de friction.", "intervenant": "présentateur"},
-        ],
-        "donnees_chiffrees": [
-            "Donnée A : valeur X dans le contexte Y mentionné à la minute Z",
-            "Donnée B : statistique précise issue d'une étude citée",
-        ],
-        "donnees": {
-            "source_type": "youtube",
-            "chaine": metadata.get("channel", "Chaîne inconnue"),
-            "duree": metadata.get("duration", "??:??"),
-            "type_contenu": "interview",
-        },
-        "conclusions": "[MOCK] La vidéo conclut sur deux points distincts qui synthétisent l'ensemble du propos.",
-        "category": "Business",
-        "tags": ["mock-data", "youtube", "enriched"],
-        "relevance_score": 4,
-        "mode_used": "enriched",
-    }
-
-
-def _mock_youtube_chapters(title: str, metadata: dict) -> dict:
-    return {
-        "tldr": (
-            f"[MOCK • chapters] Longue vidéo YouTube : {title}. "
-            "Synthèse par chapitres sans appel Claude (MOCK_MODE=true). "
-            "Format interview/conférence avec plusieurs intervenants couvrant des sujets distincts."
-        ),
-        "chapters": [
-            {
-                "title": "Introduction et présentation des intervenants",
-                "timestamp_approx": "00:00 - 12:00",
-                "key_points": [
-                    "Présentation du contexte et des objectifs de la vidéo",
-                    "Présentation des intervenants et de leurs parcours",
-                    "Annonce du plan général de la vidéo",
-                ],
-                "key_quotes": [
-                    "Citation d'introduction du premier intervenant.",
-                ],
-            },
-            {
-                "title": "Premier sujet principal",
-                "timestamp_approx": "12:00 - 35:00",
-                "key_points": [
-                    "Argument central du premier sujet avec données chiffrées",
-                    "Exemple concret illustrant la thèse principale",
-                    "Nuance ou contre-argument apporté par un second intervenant",
-                    "Point factuel précis avec référence à une source externe",
-                ],
-                "key_quotes": [
-                    "Citation marquante sur le premier sujet.",
-                    "Réponse clé d'un autre intervenant.",
-                ],
-            },
-            {
-                "title": "Deuxième sujet : approfondissement et débat",
-                "timestamp_approx": "35:00 - 58:00",
-                "key_points": [
-                    "Transition vers le deuxième angle de la discussion",
-                    "Données et preuves présentées à l'appui",
-                    "Débat entre intervenants sur ce point précis",
-                ],
-                "key_quotes": [
-                    "Formulation synthétique d'un des intervenants.",
-                ],
-            },
-            {
-                "title": "Conclusion et takeaways",
-                "timestamp_approx": "58:00 - 75:00",
-                "key_points": [
-                    "Récapitulatif des points clés de la vidéo",
-                    "Recommandations ou prochaines étapes proposées",
-                    "Message final de clôture des intervenants",
-                ],
-                "key_quotes": [
-                    "Citation de clôture mémorable.",
-                ],
-            },
-        ],
-        "donnees_chiffrees": [
-            "Donnée mock A : valeur chiffrée et son contexte dans la vidéo",
-            "Donnée mock B : statistique mentionnée par un intervenant",
-        ],
-        "donnees": {
-            "source_type": "youtube",
-            "chaine": metadata.get("channel", "Chaîne inconnue"),
-            "duree": metadata.get("duration", "??:??"),
-            "type_contenu": "conférence",
-        },
-        "conclusion_globale": (
-            "[MOCK] La vidéo développe plusieurs axes complémentaires et conclut sur des "
-            "recommandations pratiques. Les intervenants s'accordent sur les grandes lignes "
-            "tout en maintenant des nuances sur les détails d'application."
-        ),
-        "category": "Culture",
-        "tags": ["mock-data", "youtube", "chapters"],
-        "relevance_score": 4,
-        "mode_used": "chapters",
     }

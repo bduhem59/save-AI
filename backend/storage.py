@@ -40,7 +40,8 @@ def init_db() -> None:
                 claude_cost_eur      REAL    DEFAULT 0.0,
                 model_used           TEXT,
                 is_favorite          INTEGER NOT NULL DEFAULT 0,
-                is_read              INTEGER NOT NULL DEFAULT 0
+                is_read              INTEGER NOT NULL DEFAULT 0,
+                status               TEXT    DEFAULT 'done'
             );
 
             CREATE TABLE IF NOT EXISTS consultations (
@@ -59,6 +60,7 @@ def init_db() -> None:
     _migrate_add_column("category",    "TEXT")
     _migrate_add_column("is_favorite", "INTEGER NOT NULL DEFAULT 0")
     _migrate_add_column("is_read",     "INTEGER NOT NULL DEFAULT 0")
+    _migrate_add_column("status",      "TEXT DEFAULT 'done'")
 
 
 def _migrate_add_column(column: str, definition: str) -> None:
@@ -75,6 +77,62 @@ def url_exists(url: str) -> Optional[int]:
     with _connect() as conn:
         row = conn.execute("SELECT id FROM saves WHERE url = ?", (url,)).fetchone()
         return row["id"] if row else None
+
+
+def insert_pending_save(
+    url: str,
+    source: str,
+    title: str,
+    content_raw: str,
+    metadata: dict,
+) -> int:
+    """Insère un save avec status='pending' et retourne son ID immédiatement."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            """INSERT INTO saves
+               (url, source, title, content_raw, metadata, tags, status)
+               VALUES (?, ?, ?, ?, ?, '[]', 'pending')""",
+            (url, source, title, content_raw, json.dumps(metadata, ensure_ascii=False)),
+        )
+        return cursor.lastrowid
+
+
+def update_save_summary(
+    save_id: int,
+    summary: str,
+    tags: list,
+    relevance_score: int,
+    category: Optional[str],
+    tokens_input: int,
+    tokens_output: int,
+    cost_eur: float,
+    model_used: str,
+    title: Optional[str] = None,
+    status: str = "done",
+) -> None:
+    """Met à jour un save pending avec les données Claude."""
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE saves SET
+               summary = ?, tags = ?, relevance_score = ?, category = ?,
+               claude_tokens_input = ?, claude_tokens_output = ?,
+               claude_cost_eur = ?, model_used = ?, status = ?,
+               title = COALESCE(?, title)
+               WHERE id = ?""",
+            (
+                summary,
+                json.dumps(tags, ensure_ascii=False),
+                relevance_score,
+                category,
+                tokens_input,
+                tokens_output,
+                cost_eur,
+                model_used,
+                status,
+                title,
+                save_id,
+            ),
+        )
 
 
 def insert_save(
@@ -98,8 +156,8 @@ def insert_save(
             """INSERT INTO saves
                (url, source, title, content_raw, summary, tags, relevance_score,
                 metadata, claude_tokens_input, claude_tokens_output, claude_cost_eur,
-                model_used, category)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                model_used, category, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'done')""",
             (
                 url,
                 source,

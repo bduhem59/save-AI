@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -104,10 +104,63 @@ class ReadRequest(BaseModel):
 
 # --- Endpoints ---
 
+def _run_summary_background(
+    save_id: int,
+    source: str,
+    title: str,
+    content: str,
+    metadata: dict,
+    comments: list,
+) -> None:
+    """Tourne en background thread : appelle Claude puis met à jour le save."""
+    try:
+        result = claude_client.generate_summary(
+            source=source,
+            title=title,
+            content=content,
+            metadata=metadata,
+            comments=comments,
+        )
+        sd = result["summary_data"]
+        raw_category = sd.get("category", "Autre")
+        category = raw_category if raw_category in CATEGORIES_VALIDES else "Autre"
+        storage.update_save_summary(
+            save_id=save_id,
+            summary=sd.get("synthesis", ""),
+            title=sd.get("title"),
+            tags=sd.get("tags", []),
+            relevance_score=sd.get("relevance_score", 3),
+            category=category,
+            tokens_input=result["tokens_input"],
+            tokens_output=result["tokens_output"],
+            cost_eur=result["cost_eur"],
+            model_used=result["model_used"],
+        )
+        logger.info(
+            f"[SAVE #{save_id}] synthèse prête | {source} | {sd.get('title', title)[:60]!r} | "
+            f"catégorie: {category} | coût: {result['cost_eur']:.4f}€"
+        )
+    except Exception:
+        logger.exception(f"[SAVE #{save_id}] Erreur lors de la synthèse background")
+        storage.update_save_summary(
+            save_id=save_id,
+            summary="",
+            tags=[],
+            relevance_score=3,
+            category="Autre",
+            tokens_input=0,
+            tokens_output=0,
+            cost_eur=0.0,
+            model_used="",
+            status="error",
+        )
+
+
 @app.post("/save")
-def save_content(req: SaveRequest) -> dict:
+def save_content(req: SaveRequest, background_tasks: BackgroundTasks) -> dict:
     """
-    Sauvegarde un contenu web avec synthèse Claude.
+    Sauvegarde un contenu web.
+    Retourne immédiatement après insertion — la synthèse Claude tourne en arrière-plan.
     Si l'URL existe déjà en base, retourne le save existant sans appeler Claude.
     """
     # Déduplication par URL
@@ -117,6 +170,7 @@ def save_content(req: SaveRequest) -> dict:
         logger.info(f"[DOUBLON] URL déjà sauvegardée (id={existing_id}) : {req.url}")
         return {
             "id": existing_id,
+            "status": save.get("status", "done"),
             "tags": save["tags"],
             "summary": save["summary"],
             "relevance_score": save.get("relevance_score", 3),
@@ -125,8 +179,20 @@ def save_content(req: SaveRequest) -> dict:
             "duplicate": True,
         }
 
-    # Génération de la synthèse (Claude réel ou mock selon MOCK_MODE)
-    result = claude_client.generate_summary(
+    # Insertion immédiate avec status pending
+    save_id = storage.insert_pending_save(
+        url=req.url,
+        source=req.source,
+        title=req.title,
+        content_raw=req.content,
+        metadata=req.metadata,
+    )
+    logger.info(f"[SAVE #{save_id}] inséré (pending) — synthèse Claude en cours…")
+
+    # Synthèse Claude en arrière-plan
+    background_tasks.add_task(
+        _run_summary_background,
+        save_id=save_id,
         source=req.source,
         title=req.title,
         content=req.content,
@@ -134,44 +200,9 @@ def save_content(req: SaveRequest) -> dict:
         comments=req.comments,
     )
 
-    sd = result["summary_data"]
-
-    # Catégorie détectée par Claude (valeur normalisée ou fallback)
-    raw_category = sd.get("category", "Autre")
-    category = raw_category if raw_category in CATEGORIES_VALIDES else "Autre"
-
-    # Conversion du JSON structuré en texte markdown pour stockage
-    summary_text = _format_summary_as_markdown(sd)
-
-    # Insertion en base
-    save_id = storage.insert_save(
-        url=req.url,
-        source=req.source,
-        title=req.title,
-        content_raw=req.content,
-        summary=summary_text,
-        tags=sd.get("tags", []),
-        relevance_score=sd.get("relevance_score", 3),
-        metadata={**req.metadata, "summary_structured": sd},
-        tokens_input=result["tokens_input"],
-        tokens_output=result["tokens_output"],
-        cost_eur=result["cost_eur"],
-        model_used=result["model_used"],
-        category=category,
-    )
-
-    logger.info(
-        f"[SAVE #{save_id}] {req.source} | {req.title[:60]!r} | "
-        f"catégorie: {category} | coût: {result['cost_eur']:.4f}€ | modèle: {result['model_used']}"
-    )
-
     return {
         "id": save_id,
-        "tags": sd.get("tags", []),
-        "summary": summary_text,
-        "relevance_score": sd.get("relevance_score", 3),
-        "category": category,
-        "cost_eur": result["cost_eur"],
+        "status": "processing",
         "duplicate": False,
     }
 
@@ -242,104 +273,6 @@ def record_consultation(save_id: int, req: ConsultationRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"Save #{save_id} introuvable")
     storage.record_consultation(save_id, req.action)
     return {"ok": True}
-
-
-# --- Utilitaires ---
-
-def _format_summary_as_markdown(sd: dict) -> str:
-    """Convertit le JSON structuré Claude en texte markdown pour stockage et affichage."""
-    if sd.get("mode_used") == "chapters":
-        return _format_chapters_markdown(sd)
-
-    parts = []
-
-    if sd.get("tldr"):
-        parts.append(f"**TL;DR** : {sd['tldr']}")
-
-    if sd.get("points_cles"):
-        parts.append("\n**Points clés** :")
-        parts.extend(f"- {p}" for p in sd["points_cles"])
-
-    if sd.get("donnees_chiffrees"):
-        parts.append("\n**Données chiffrées** :")
-        parts.extend(f"- {d}" for d in sd["donnees_chiffrees"])
-
-    citations = sd.get("citations")
-    if citations:
-        parts.append("\n**Citations** :")
-        for c in citations:
-            if isinstance(c, dict):
-                line = f'> "{c.get("texte", "")}"'
-                src = c.get("source") or c.get("intervenant")
-                if src:
-                    line += f" — {src}"
-                parts.append(line)
-            elif isinstance(c, str):
-                parts.append(f'> "{c}"')
-
-    dc = sd.get("discussion_communautaire")
-    if dc:
-        parts.append("\n**Discussion communautaire** :")
-        if dc.get("sujets_frequents"):
-            parts.append("**Sujets fréquents :**")
-            parts.extend(f"- {s}" for s in dc["sujets_frequents"])
-        if dc.get("consensus"):
-            consensus = dc["consensus"]
-            parts.append("**Consensus :** " + (consensus[0] if isinstance(consensus, list) else consensus))
-        if dc.get("debats"):
-            debats = dc["debats"] if isinstance(dc["debats"], list) else [dc["debats"]]
-            parts.append("**Débats :**")
-            parts.extend(f"- {d}" for d in debats)
-        if dc.get("contre_arguments"):
-            cas = dc["contre_arguments"] if isinstance(dc["contre_arguments"], list) else [dc["contre_arguments"]]
-            parts.append("**Contre-arguments :**")
-            parts.extend(f"- {ca}" for ca in cas)
-        if dc.get("points_minoritaires"):
-            parts.append("**Points minoritaires :**")
-            parts.extend(f"- {p}" for p in dc["points_minoritaires"])
-        if dc.get("evolution_fil"):
-            parts.append(f"**Évolution du fil :** {dc['evolution_fil']}")
-        if dc.get("citations"):
-            for c in dc["citations"][:3]:
-                parts.append(f'> "{c["texte"]}" — {c["auteur"]}')
-
-    if sd.get("conclusions"):
-        parts.append(f"\n**Conclusions** : {sd['conclusions']}")
-
-    return "\n".join(parts)
-
-
-def _format_chapters_markdown(sd: dict) -> str:
-    """Formateur spécifique pour le mode YouTube chapitres."""
-    parts = []
-
-    if sd.get("tldr"):
-        parts.append(f"**TL;DR** : {sd['tldr']}")
-
-    chapters = sd.get("chapters", [])
-    if chapters:
-        n = len(chapters)
-        parts.append(f"\n**{n} chapitre{'s' if n > 1 else ''}** :")
-        for i, ch in enumerate(chapters, 1):
-            title = ch.get("title", f"Chapitre {i}")
-            ts = ch.get("timestamp_approx")
-            header = f"\n**{i}. {title}**"
-            if ts:
-                header += f" _{ts}_"
-            parts.append(header)
-            for kp in ch.get("key_points", []):
-                parts.append(f"- {kp}")
-            for kq in ch.get("key_quotes", []):
-                parts.append(f'> "{kq}"')
-
-    if sd.get("donnees_chiffrees"):
-        parts.append("\n**Données chiffrées** :")
-        parts.extend(f"- {d}" for d in sd["donnees_chiffrees"])
-
-    if sd.get("conclusion_globale"):
-        parts.append(f"\n**Conclusion globale** : {sd['conclusion_globale']}")
-
-    return "\n".join(parts)
 
 
 # --- Point d'entrée pour exécution directe ---

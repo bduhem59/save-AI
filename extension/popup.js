@@ -199,6 +199,8 @@ btnSave.addEventListener("click", async () => {
 
     if (data.duplicate) {
       showStatus("Déjà sauvegardé ✓ (doublon détecté, synthèse conservée)", "success");
+    } else if (data.status === "processing") {
+      showStatus("Sauvegardé ✓ — synthèse en cours…", "success");
     } else {
       const tagsStr = data.tags?.length ? data.tags.join(", ") : "—";
       showStatus(`Saved ✓  Score ${data.relevance_score}/5 · Tags : ${tagsStr}`, "success");
