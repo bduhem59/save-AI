@@ -69,7 +69,18 @@ async function extractYoutube() {
   }
 
   // Cas 2 : chercher et cliquer le bouton transcript
-  const btn = findTranscriptButton();
+  let btn = findTranscriptButton();
+  if (!btn) {
+    const expandBtn = document.querySelector(
+      "#description-inline-expander #expand, " +
+      "ytd-text-inline-expander #expand"
+    );
+    if (expandBtn) {
+      expandBtn.click();
+      await new Promise(r => setTimeout(r, 400));
+      btn = findTranscriptButton();
+    }
+  }
   if (!btn) {
     console.log("[YouTube] Transcript button not found");
     return { content: null, error: "no_transcript" };

@@ -3,6 +3,13 @@
 
 const BACKEND_SAVE_URL = "http://localhost:8000/save";
 
+// Détection de secours basée sur l'URL (utilisée si le check content script expire)
+function detectSourceFromUrl(url) {
+  if (/youtube\.com\/watch/.test(url))               return "youtube";
+  if (/reddit\.com\/r\/[^/]+\/comments\//.test(url)) return "reddit";
+  return "article";
+}
+
 const btnSave   = document.getElementById("btn-save");
 const statusEl  = document.getElementById("status");
 const titleEl   = document.getElementById("page-title");
@@ -22,6 +29,11 @@ function showStatus(msg, type) {
 function setLoading(on) {
   btnSave.disabled = on;
   btnSave.textContent = on ? "Sauvegarde en cours…" : "Sauvegarder";
+}
+
+function setSaved() {
+  btnSave.disabled = true;
+  btnSave.textContent = "Sauvegardé ✓";
 }
 
 function updateCompatUI(status, label, disableSave) {
@@ -56,7 +68,7 @@ async function runCompatibilityCheck() {
   let result;
   try {
     const checkPromise = chrome.tabs.sendMessage(tab.id, { action: "check" });
-    const timeout = new Promise(resolve => setTimeout(() => resolve(null), 250));
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), 700));
     result = await Promise.race([checkPromise, timeout]);
   } catch (e) {
     // Content script non chargé : onglet ouvert avant installation de l'extension
@@ -65,7 +77,7 @@ async function runCompatibilityCheck() {
   }
 
   if (!result) {
-    // Timeout dépassé — on laisse quand même essayer
+    detectedSource = detectSourceFromUrl(url); // B1 : fallback URL, évite source:"article" par défaut
     updateCompatUI("partial", "Détection expirée — essaie quand même", false);
     return;
   }
@@ -77,7 +89,9 @@ async function runCompatibilityCheck() {
 // --- Initialisation ---
 
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  titleEl.textContent = tabs[0]?.title || "(titre indisponible)";
+  const t = tabs[0]?.title || "(titre indisponible)";
+  titleEl.textContent = t;
+  titleEl.title = t;
 });
 
 runCompatibilityCheck();
@@ -103,12 +117,20 @@ btnSave.addEventListener("click", async () => {
   // 2. Extraction complète via Readability (content script)
   let extracted;
   try {
-    extracted = await chrome.tabs.sendMessage(tab.id, { action: "extract" });
-  } catch (e) {
-    showStatus(
-      "Impossible d'accéder à cette page. Si l'onglet était ouvert avant l'installation, recharge la page (F5).",
-      "error"
+    const extractPromise = chrome.tabs.sendMessage(tab.id, { action: "extract" });
+    const extractTimeout  = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("extract_timeout")), 10000)
     );
+    extracted = await Promise.race([extractPromise, extractTimeout]);
+  } catch (e) {
+    if (e.message === "extract_timeout") {
+      showStatus("La page n'a pas répondu à temps — réessaie ou recharge la page.", "error");
+    } else {
+      showStatus(
+        "Impossible d'accéder à cette page. Si l'onglet était ouvert avant l'installation, recharge la page (F5).",
+        "error"
+      );
+    }
     setLoading(false);
     return;
   }
@@ -181,6 +203,8 @@ btnSave.addEventListener("click", async () => {
       const tagsStr = data.tags?.length ? data.tags.join(", ") : "—";
       showStatus(`Saved ✓  Score ${data.relevance_score}/5 · Tags : ${tagsStr}`, "success");
     }
+    setSaved();
+    return;
   } catch (e) {
     if (e instanceof TypeError && e.message.includes("fetch")) {
       showStatus(
