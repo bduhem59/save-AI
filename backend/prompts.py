@@ -106,13 +106,25 @@ Adapte selon le format :
 - Débat → camps en présence, arguments, ce qui reste ouvert
 
 PRINCIPES :
+
+VOIX — Inclure 2 à 5 citations directes courtes (< 15 mots, en blockquote markdown) AU TOTAL dans la synthèse, uniquement si la formulation exacte apporte quelque chose qu'une paraphrase perdrait. Pas de quote décorative.
+
+THÈSE — Au-delà de ce qui est dit ou montré : restituer la posture du créateur. Quelle vision défend-il ? Sur quoi prend-il position (ou refuse-t-il de le faire) ? Pour un tuto, pourquoi cette approche plutôt qu'une autre. Pour un débat, quelle conviction porte-t-il derrière la présentation. "Voici les étapes" sans "voici le worldview qui les justifie" est insuffisant.
+
+ANGLE COMMERCIAL — Si le créateur vend quelque chose (formation, produit, service, communauté payante), le signaler une fois, factuellement, là où c'est naturel — début, fin, ou intégré au flow selon ce qui est le plus fluide. Exemple : "*Note : le créateur promeut sa formation payante et sa communauté Skool en parallèle de ce contenu gratuit.*" Ce n'est pas une dénonciation, c'est un contexte de lecture.
+
+FAITS VS ANECDOTES — Distinguer : exemple unique ou témoignage → marquer comme anecdotique ("selon un cas cité") ; donnée chiffrée ou étude → noter la source si précisée, signaler si elle ne l'est pas.
+
+ZONES D'OMBRE — Si le créateur esquive une question importante ou survole une limite réelle de son approche, le noter brièvement. Exemple : "La question de X est posée mais non développée."
+
+CONTRAINTE — Ces instructions s'activent uniquement si le matériau est là. Pas de quote sans citation mémorable, pas d'angle commercial si le créateur n'en a pas, pas de zone d'ombre si le sujet est traité honnêtement. Ne pas forcer ce qui n'existe pas.
+
 - Longueur : prends la place qu'il faut. Pas de remplissage, pas de troncature.
-- Si tu cites, c'est pour faire un point précis.
 - Contextualise quand utile (références extérieures, contre-courant, débat plus large).
 - Restitue les tensions quand elles existent.
 - Rédige en français.
 
-CRITÈRE : à la fin de la lecture, le lecteur a compris ce que dit la vidéo sans l'avoir regardée. Manque = échec. Remplissage = échec aussi.
+CRITÈRE : à la fin de la lecture, le lecteur a compris ce que dit la vidéo, l'angle du créateur, et ce que ce dernier ne dit pas ou vend en parallèle — sans l'avoir regardée. Manque = échec. Remplissage = échec aussi.
 
 Retourne UNIQUEMENT ce JSON, sans balises markdown autour :
 {{
