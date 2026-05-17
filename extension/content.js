@@ -62,7 +62,7 @@ async function extractYoutube() {
   const duration = document.querySelector(".ytp-time-duration")?.textContent?.trim() || null;
 
   // Cas 1 : transcript déjà ouvert dans le DOM (popup re-ouverte, panneau visible)
-  const existingSegments = document.querySelectorAll("ytd-transcript-segment-renderer");
+  const existingSegments = document.querySelectorAll("transcript-segment-view-model, ytd-transcript-segment-renderer");
   if (existingSegments.length > 0) {
     console.log(`[YouTube] Transcript already open, found ${existingSegments.length} segments`);
     return buildYoutubePayload(existingSegments, title, channel, duration, videoId, url);
@@ -90,13 +90,13 @@ async function extractYoutube() {
   btn.click();
 
   // Attendre l'apparition du panneau transcript (max 3 s)
-  const firstSegment = await waitForElement("ytd-transcript-segment-renderer", 3000);
+  const firstSegment = await waitForElement("transcript-segment-view-model, ytd-transcript-segment-renderer", 10000);
   if (!firstSegment) {
-    console.log("[YouTube] Transcript panel did not open within 3s");
+    console.log("[YouTube] Transcript panel did not open within 10s");
     return { content: null, error: "panel_timeout" };
   }
 
-  const segments = document.querySelectorAll("ytd-transcript-segment-renderer");
+  const segments = document.querySelectorAll("transcript-segment-view-model, ytd-transcript-segment-renderer");
   console.log(`[YouTube] Transcript panel opened, found ${segments.length} segments`);
 
   return buildYoutubePayload(segments, title, channel, duration, videoId, url);
@@ -126,7 +126,8 @@ function findTranscriptButton() {
 function buildYoutubePayload(segments, title, channel, duration, videoId, url) {
   const text = Array.from(segments)
     .map(seg =>
-      seg.querySelector("yt-formatted-string.segment-text, .segment-text")?.textContent?.trim() || ""
+      seg.querySelector("span.ytAttributedStringHost, yt-formatted-string.segment-text, .segment-text")
+        ?.textContent?.trim() || seg.textContent?.trim() || ""
     )
     .filter(t => t.length > 0)
     .join(" ");
@@ -283,7 +284,7 @@ function checkCompatibility() {
     }
 
     // Page vidéo — transcript déjà ouvert ?
-    if (document.querySelector("ytd-transcript-segment-renderer")) {
+    if (document.querySelector("transcript-segment-view-model, ytd-transcript-segment-renderer")) {
       return { status: "ok", label: "Vidéo YouTube · transcript ouvert", source: "youtube", disableSave: false };
     }
 
