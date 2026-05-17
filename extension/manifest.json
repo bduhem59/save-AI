@@ -4,8 +4,8 @@
   "version": "0.2.0",
   "description": "Sauvegardez du contenu web en 1 clic avec synthèses Claude",
 
-  "permissions": ["activeTab", "tabs"],
-  "host_permissions": ["http://localhost:8000/*"],
+  "permissions": ["activeTab", "tabs", "scripting"],
+  "host_permissions": ["http://localhost:8000/*", "https://www.youtube.com/*"],
 
   "action": {
     "default_popup": "popup.html",
