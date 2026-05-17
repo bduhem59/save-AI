@@ -275,6 +275,62 @@ def record_consultation(save_id: int, req: ConsultationRequest) -> dict:
     return {"ok": True}
 
 
+@app.post("/saves/{save_id}/resummarize")
+def resummarize(save_id: int) -> dict:
+    """Relance la synthèse Claude sur un save existant avec le prompt actuel."""
+    save = storage.get_save_by_id(save_id)
+    if not save:
+        raise HTTPException(status_code=404, detail=f"Save #{save_id} introuvable")
+    if not save.get("content_raw"):
+        raise HTTPException(status_code=422, detail=f"Save #{save_id} sans contenu brut")
+
+    source   = save["source"]
+    title    = save["title"]
+    content  = save["content_raw"]
+    metadata = save.get("metadata") or {}
+    if isinstance(metadata, str):
+        import json
+        try:    metadata = json.loads(metadata)
+        except Exception: metadata = {}
+
+    logger.info(f"[RESUMMARIZE #{save_id}] début | {source} | {title[:60]!r}")
+
+    try:
+        result = claude_client.generate_summary(
+            source=source,
+            title=title,
+            content=content,
+            metadata=metadata,
+            comments=[],   # comments non ré-enregistrés en DB, acceptable pour YouTube/Article
+        )
+    except Exception as e:
+        logger.exception(f"[RESUMMARIZE #{save_id}] erreur Claude")
+        raise HTTPException(status_code=502, detail=f"Erreur Claude : {e}")
+
+    sd           = result["summary_data"]
+    raw_category = sd.get("category", "Autre")
+    category     = raw_category if raw_category in CATEGORIES_VALIDES else "Autre"
+
+    storage.update_save_summary(
+        save_id=save_id,
+        summary=sd.get("synthesis", ""),
+        title=sd.get("title"),
+        tags=sd.get("tags", []),
+        relevance_score=sd.get("relevance_score", 3),
+        category=category,
+        tokens_input=result["tokens_input"],
+        tokens_output=result["tokens_output"],
+        cost_eur=result["cost_eur"],
+        model_used=result["model_used"],
+    )
+
+    logger.info(
+        f"[RESUMMARIZE #{save_id}] terminé | {sd.get('title', title)[:60]!r} | "
+        f"catégorie: {category} | coût: {result['cost_eur']:.4f}€"
+    )
+    return storage.get_save_by_id(save_id)
+
+
 # --- Point d'entrée pour exécution directe ---
 
 if __name__ == "__main__":
