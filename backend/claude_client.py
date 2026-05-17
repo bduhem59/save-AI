@@ -57,18 +57,44 @@ def _calculate_cost_eur(model: str, tokens_in: int, tokens_out: int) -> float:
 
 def _parse_json_response(raw: str) -> dict:
     """
-    Extrait le JSON de la réponse Claude.
-    Gère le cas où Claude ajoute des balises markdown autour du JSON.
+    Extrait le JSON de la réponse Claude — 3 tentatives en cascade.
+    Tentative 1 : json.loads direct
+    Tentative 2 : json.loads sur la sous-chaîne {…} extraite par regex
+    Tentative 3 : json_repair (guillemets non échappés, virgules manquantes, etc.)
     """
     cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+
+    # Tentative 1 : parse direct
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
+        pass
+
+    # Tentative 2 : extraire le bloc {…} et re-parser
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
             return json.loads(match.group())
-        logger.warning("Impossible de parser le JSON Claude, fallback texte brut")
-        return {"tldr": raw[:500], "points_cles": [], "tags": [], "relevance_score": 3}
+        except json.JSONDecodeError:
+            pass
+
+    # Tentative 3 : json_repair — gère guillemets non échappés, JSON tronqué, etc.
+    try:
+        from json_repair import repair_json
+        logger.warning(
+            f"[Claude] JSON malformé — recours à json_repair "
+            f"(preview : {cleaned[:200]!r})"
+        )
+        repaired = repair_json(cleaned, return_objects=True)
+        if isinstance(repaired, dict):
+            return repaired
+    except Exception as e:
+        logger.warning(f"[Claude] json_repair a échoué : {e}")
+
+    raise ValueError(
+        f"Impossible de parser la réponse Claude après 3 tentatives. "
+        f"Début du JSON cassé : {cleaned[:200]!r}"
+    )
 
 
 def _format_reddit_content(content: str, comments: list) -> str:
